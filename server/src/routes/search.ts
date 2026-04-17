@@ -12,7 +12,14 @@ searchRouter.use(requireAuth);
 interface OsSearchHit {
   _id: string;
   _score: number;
-  _source: { bucket: string; key: string; prefix?: string; size?: number; lastModified?: string };
+  _source: {
+    BucketName: string;
+    Key: string;
+    Parent?: string;
+    IsFolder?: boolean;
+    Size?: number;
+    LastModified?: string;
+  };
 }
 interface OsSearchResponse {
   hits: { total: { value: number }; hits: OsSearchHit[] };
@@ -41,10 +48,16 @@ searchRouter.get('/search', async (req, res) => {
       bypassedScope: config.searchBypassScope,
       scope: scope.buckets,
       total: r.body.hits?.total?.value ?? 0,
+      // Normalise CSD's PascalCase field names to the lowercase shape the
+      // web client already consumes, so we don't need a frontend change.
       hits: (r.body.hits?.hits ?? []).map(h => ({
         id: h._id,
         score: h._score,
-        ...h._source,
+        bucket: h._source.BucketName,
+        key: h._source.Key,
+        prefix: h._source.Parent,
+        size: h._source.Size,
+        lastModified: h._source.LastModified,
       })),
     });
   } catch (e: any) {
@@ -55,11 +68,18 @@ searchRouter.get('/search', async (req, res) => {
 function bypassedQuery(q: string): Record<string, unknown> {
   return {
     size: 50,
-    _source: ['bucket', 'key', 'prefix', 'size', 'lastModified'],
+    _source: ['BucketName', 'Key', 'Parent', 'IsFolder', 'Size', 'LastModified'],
     query: q
-      ? { multi_match: { query: q, fields: ['key^3', 'prefix^2', 'bucket'] } }
+      ? {
+          dis_max: {
+            queries: [
+              { match: { Key: q } },
+              { wildcard: { 'Key.keyword': { value: `*${q}*`, case_insensitive: true } } },
+            ],
+          },
+        }
       : { match_all: {} },
-    sort: [{ _score: 'desc' }, { 'key.keyword': 'asc' }],
+    sort: [{ _score: 'desc' }, { 'Key.keyword': 'asc' }],
   };
 }
 

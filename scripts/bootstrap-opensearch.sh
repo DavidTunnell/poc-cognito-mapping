@@ -115,8 +115,8 @@ cat > "$STAGE/mapping.json" <<'EOF'
 {"mappings":{"properties":{"bucket":{"type":"keyword"},"key":{"type":"text","fields":{"keyword":{"type":"keyword","ignore_above":1024}}},"prefix":{"type":"keyword"},"size":{"type":"long"},"lastModified":{"type":"date"}}}}
 EOF
 
-cat > "$STAGE/role.json" <<'EOF'
-{"cluster_permissions":["cluster_composite_ops"],"index_permissions":[{"index_patterns":["poc-csd-*"],"allowed_actions":["indices_all"]}]}
+cat > "$STAGE/role.json" <<EOF
+{"cluster_permissions":["cluster_composite_ops"],"index_permissions":[{"index_patterns":["poc-csd-*"],"allowed_actions":["indices_all"]},{"index_patterns":["aws_account_${ACCOUNT_ID}_*_active"],"allowed_actions":["read","indices:data/read/search","indices:data/read/msearch","indices:data/read/mget","indices:admin/get","indices:admin/mappings/get"]}]}
 EOF
 
 INSTANCE_ROLE_ARN="$INSTANCE_ROLE_ARN" python -c "import json,os; print(json.dumps({'backend_roles':[os.environ['INSTANCE_ROLE_ARN']]}))" > "$STAGE/rolemapping.json"

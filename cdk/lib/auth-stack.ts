@@ -1,21 +1,29 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
-interface AuthStackProps extends cdk.StackProps {
-  bucketA: s3.Bucket;
-  bucketB: s3.Bucket;
-  bucketC: s3.Bucket;
-}
+// Real CSD demo buckets the POC targets. All live in account 592920047652.
+const BUCKET_ALL = 'cloudsee-demo';            // bob gets full RW here
+const BUCKET_PREFIX = 'cloudsee-demo-1';       // carol reads only under Dogs1/
+const BUCKET_PREFIX_SCOPE = 'Dogs1/';          // the prefix carol is scoped to
+const ALL_BUCKETS = [
+  'cloudsee-demo',
+  'cloudsee-demo-1',
+  'cloudsee-demo-2',
+  's3-file-1000k',
+  'henry-drive-test-1000k',
+];
+
+function bucketArn(name: string): string { return `arn:aws:s3:::${name}`; }
+function objectsArn(name: string): string { return `arn:aws:s3:::${name}/*`; }
 
 export class AuthStack extends cdk.Stack {
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly identityPool: cognito.CfnIdentityPool;
 
-  constructor(scope: Construct, id: string, props: AuthStackProps) {
+  constructor(scope: Construct, id: string, props: cdk.StackProps) {
     super(scope, id, props);
 
     // User Pool — email+password, admin-created users only
@@ -72,47 +80,58 @@ export class AuthStack extends cdk.Stack {
       },
     });
 
-    // Per-group IAM roles
+    // Per-group IAM roles — now targeting REAL CSD demo buckets.
+    // (Previously pointed at our own poc-csd-bucket-* test buckets.)
+
     const readonlyAllRole = new iam.Role(this, 'ReadonlyAllRole', {
       roleName: 'poc-csd-readonly-all',
       assumedBy: this.federatedPrincipal(this.identityPool.ref),
-      description: 'Read-only access to all POC buckets',
+      description: 'Read-only on all 5 real CSD demo buckets',
     });
-    this.attachS3Readonly(readonlyAllRole, [props.bucketA, props.bucketB, props.bucketC]);
+    readonlyAllRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket', 's3:GetBucketLocation'],
+      resources: ALL_BUCKETS.map(bucketArn),
+    }));
+    readonlyAllRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject'],
+      resources: ALL_BUCKETS.map(objectsArn),
+    }));
 
     const rwBucketARole = new iam.Role(this, 'RwBucketARole', {
       roleName: 'poc-csd-rw-bucket-a',
       assumedBy: this.federatedPrincipal(this.identityPool.ref),
-      description: 'Full read/write on bucket A only',
+      description: `Full RW on ${BUCKET_ALL} only`,
     });
     rwBucketARole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['s3:ListBucket', 's3:GetBucketLocation'],
-      resources: [props.bucketA.bucketArn],
+      resources: [bucketArn(BUCKET_ALL)],
     }));
     rwBucketARole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
-      resources: [`${props.bucketA.bucketArn}/*`],
+      resources: [objectsArn(BUCKET_ALL)],
     }));
 
     const readonlyPrefixXRole = new iam.Role(this, 'ReadonlyPrefixXRole', {
       roleName: 'poc-csd-readonly-prefix-x',
       assumedBy: this.federatedPrincipal(this.identityPool.ref),
-      description: 'Read-only access to bucket B, restricted to prefix x/',
+      description: `Read-only on ${BUCKET_PREFIX}, restricted to ${BUCKET_PREFIX_SCOPE}`,
     });
     readonlyPrefixXRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['s3:ListBucket'],
-      resources: [props.bucketB.bucketArn],
+      resources: [bucketArn(BUCKET_PREFIX)],
       conditions: {
-        StringLike: { 's3:prefix': ['x/*', 'x/'] },
+        StringLike: { 's3:prefix': [`${BUCKET_PREFIX_SCOPE}*`, BUCKET_PREFIX_SCOPE] },
       },
     }));
     readonlyPrefixXRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject'],
-      resources: [`${props.bucketB.bucketArn}/x/*`],
+      resources: [`arn:aws:s3:::${BUCKET_PREFIX}/${BUCKET_PREFIX_SCOPE}*`],
     }));
 
     // Cognito groups → role ARNs
@@ -189,16 +208,4 @@ export class AuthStack extends cdk.Stack {
     );
   }
 
-  private attachS3Readonly(role: iam.Role, buckets: s3.Bucket[]): void {
-    role.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: ['s3:ListBucket', 's3:GetBucketLocation'],
-      resources: buckets.map(b => b.bucketArn),
-    }));
-    role.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: ['s3:GetObject'],
-      resources: buckets.map(b => `${b.bucketArn}/*`),
-    }));
-  }
 }

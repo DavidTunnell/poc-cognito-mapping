@@ -4,23 +4,30 @@ function required(name: string): string {
   return v;
 }
 
+const DEFAULT_REAL_BUCKETS = [
+  'cloudsee-demo',
+  'cloudsee-demo-1',
+  'cloudsee-demo-2',
+  's3-file-1000k',
+  'henry-drive-test-1000k',
+];
+
+// Candidate prefixes to probe when a user's IAM role conditions s3:ListBucket
+// on s3:prefix. POC heuristic; covers the handful of folder roots in the
+// demo buckets (Dogs1/ and Puppies/ in cloudsee-demo-1, plus a few common ones).
+const DEFAULT_PROBE_PREFIXES = ['Dogs1/', 'Puppies/', 'shared/', 'proj/', 'x/', 'y/'];
+
 export const config = {
   region: process.env.AWS_REGION ?? 'us-east-1',
   userPoolId: required('USER_POOL_ID'),
   userPoolClientId: required('USER_POOL_CLIENT_ID'),
   identityPoolId: required('IDENTITY_POOL_ID'),
-  buckets: {
-    a: required('BUCKET_A'),
-    b: required('BUCKET_B'),
-    c: required('BUCKET_C'),
-  },
+  realBuckets: (process.env.REAL_BUCKETS ?? DEFAULT_REAL_BUCKETS.join(','))
+    .split(',').map(s => s.trim()).filter(Boolean),
   opensearchEndpoint: process.env.OPENSEARCH_ENDPOINT ?? '',
-  opensearchIndex: process.env.OPENSEARCH_INDEX ?? 'poc-csd-objects',
-  // Candidate prefixes to probe when the user's IAM role conditions s3:ListBucket
-  // on s3:prefix. Kept tiny and predictable on purpose — POC heuristic, not production.
-  probePrefixes: (process.env.PROBE_PREFIXES ?? 'x/,y/,proj/,shared/').split(',').filter(Boolean),
-  // Disables scope filter injection on /api/search — proves the filter is what
-  // makes the difference. Leave off in normal operation.
+  opensearchIndex: process.env.OPENSEARCH_INDEX ?? 'aws_account_592920047652_uat_active',
+  probePrefixes: (process.env.PROBE_PREFIXES ?? DEFAULT_PROBE_PREFIXES.join(','))
+    .split(',').map(s => s.trim()).filter(Boolean),
   searchBypassScope: process.env.SEARCH_BYPASS_SCOPE === '1',
   port: Number(process.env.PORT ?? 3000),
   dataDir: process.env.DATA_DIR ?? './data',
@@ -28,7 +35,7 @@ export const config = {
 };
 
 export function allBuckets(): string[] {
-  return [config.buckets.a, config.buckets.b, config.buckets.c];
+  return config.realBuckets;
 }
 
 export function loginsKey(): string {
