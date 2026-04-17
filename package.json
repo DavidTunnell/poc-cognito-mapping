@@ -1,0 +1,25 @@
+{
+  "name": "poc-cognito-mapping",
+  "version": "0.1.0",
+  "private": true,
+  "description": "POC: Cognito → IAM permission inheritance for CloudSee Drive",
+  "workspaces": [
+    "cdk",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w server && npm run build -w web",
+    "synth": "npm run synth -w cdk",
+    "deploy:infra": "npm run deploy -w cdk",
+    "deploy:app": "bash scripts/deploy.sh",
+    "seed:users": "bash scripts/seed-users.sh",
+    "seed:s3": "bash scripts/seed-s3.sh",
+    "teardown": "bash scripts/teardown.sh",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

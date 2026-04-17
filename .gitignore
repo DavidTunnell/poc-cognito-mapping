@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local
+.DS_Store
+
+# CDK
+cdk.out/
+*.swp
+
+# Build artifacts
+server/dist/
+web/dist/
+cdk/dist/
+app.tar.gz
+.deploy-stage/
+
+# Secrets — never commit
+**/credentials
+**/*.pem
+**/*.key
+
+# Runtime data on EC2
+server/data/
+
+# Claude Code local settings
+.claude/
