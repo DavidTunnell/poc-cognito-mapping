@@ -14,6 +14,14 @@ export const config = {
     b: required('BUCKET_B'),
     c: required('BUCKET_C'),
   },
+  opensearchEndpoint: process.env.OPENSEARCH_ENDPOINT ?? '',
+  opensearchIndex: process.env.OPENSEARCH_INDEX ?? 'poc-csd-objects',
+  // Candidate prefixes to probe when the user's IAM role conditions s3:ListBucket
+  // on s3:prefix. Kept tiny and predictable on purpose — POC heuristic, not production.
+  probePrefixes: (process.env.PROBE_PREFIXES ?? 'x/,y/,proj/,shared/').split(',').filter(Boolean),
+  // Disables scope filter injection on /api/search — proves the filter is what
+  // makes the difference. Leave off in normal operation.
+  searchBypassScope: process.env.SEARCH_BYPASS_SCOPE === '1',
   port: Number(process.env.PORT ?? 3000),
   dataDir: process.env.DATA_DIR ?? './data',
   webDistDir: process.env.WEB_DIST_DIR ?? '../web/dist',

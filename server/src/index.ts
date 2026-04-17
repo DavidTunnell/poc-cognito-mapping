@@ -6,6 +6,7 @@ import { config } from './config';
 import { authRouter } from './routes/auth';
 import { bucketsRouter } from './routes/buckets';
 import { adminRouter } from './routes/admin';
+import { searchRouter } from './routes/search';
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -15,6 +16,7 @@ app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
 app.use('/auth', authRouter);
 app.use('/api', bucketsRouter);
+app.use('/api', searchRouter);
 app.use('/api/admin', adminRouter);
 
 // Serve the built web app

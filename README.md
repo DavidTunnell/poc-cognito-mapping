@@ -100,6 +100,36 @@ npm run teardown
 
 Empties the 4 buckets and runs `cdk destroy --all`. Verify in the console that no `PocCsd-*` stacks or `poc-csd-*` resources remain, then delete the POC IAM user and its access key.
 
-## Next step (if the approach holds)
+## Branches
 
-Extending this POC to demonstrate IAM-scope resolution against **OpenSearch-indexed** data — the trickiest part of a real CSD integration, since OpenSearch doesn't know about IAM. Approach: resolve each user's effective S3 scope once at login (via `iam:SimulatePrincipalPolicy` or prefix probing), cache it, inject as a `bool.filter` on every OpenSearch query. Keeps IAM as the source of truth without translating policies per-request.
+- `main` — baseline POC, Cognito→IAM→S3. Approved demo, runs in CloudSeeDrive-Test VPC.
+- `opensearch-extension` — same POC + a `/search` page that queries the existing `cloudseedrive-uat` OpenSearch domain, filtered by each user's IAM-derived scope. Deploys to the CloudSeeDrive-UAT VPC so it can reach the VPC endpoint. Design in [`docs/opensearch-architecture.md`](docs/opensearch-architecture.md).
+
+### Bringing up the OpenSearch extension
+
+```bash
+git checkout opensearch-extension
+npm install
+
+# Redeploy EC2 into UAT VPC (Test-VPC EC2 is destroyed in the same step)
+export AWS_PROFILE=poc-csd
+npm run deploy:infra
+
+# Bootstrap UAT OpenSearch: access policy + index + role mapping.
+# Requires a second profile that authenticates as the UAT master user.
+export MASTER_AWS_PROFILE=csd-opensearch-master
+bash scripts/bootstrap-opensearch.sh
+
+# Seed the index and ship the app
+bash scripts/seed-opensearch.sh
+npm run deploy:app
+```
+
+Reverse order to remove:
+
+```bash
+bash scripts/teardown-opensearch.sh   # BEFORE cdk destroy, needs MASTER_AWS_PROFILE
+npm run teardown
+```
+
+`main` remains the clean demo; the extension is PR'd separately so the UAT-touching changes are reviewed before merge.
