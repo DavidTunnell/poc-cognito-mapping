@@ -16,19 +16,10 @@ const prefix = 'PocCsd';
 
 const s3 = new S3Stack(app, `${prefix}-S3`, { env });
 
-const auth = new AuthStack(app, `${prefix}-Auth`, {
-  env,
-  bucketA: s3.bucketA,
-  bucketB: s3.bucketB,
-  bucketC: s3.bucketC,
-});
-auth.addDependency(s3);
+const auth = new AuthStack(app, `${prefix}-Auth`, { env });
 
 new Ec2Stack(app, `${prefix}-Ec2`, {
   env,
-  bucketA: s3.bucketA,
-  bucketB: s3.bucketB,
-  bucketC: s3.bucketC,
   deployBucket: s3.deployBucket,
   userPoolId: auth.userPool.userPoolId,
   userPoolClientId: auth.userPoolClient.userPoolClientId,

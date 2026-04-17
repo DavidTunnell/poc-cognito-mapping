@@ -4,10 +4,17 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
+// Real CSD demo buckets this POC targets. Custom-mode presigns use the
+// instance role against these, so the instance role gets s3:GetObject/PutObject.
+const REAL_BUCKETS = [
+  'cloudsee-demo',
+  'cloudsee-demo-1',
+  'cloudsee-demo-2',
+  's3-file-1000k',
+  'henry-drive-test-1000k',
+];
+
 interface Ec2StackProps extends cdk.StackProps {
-  bucketA: s3.Bucket;
-  bucketB: s3.Bucket;
-  bucketC: s3.Bucket;
   deployBucket: s3.Bucket;
   userPoolId: string;
   userPoolClientId: string;
@@ -20,12 +27,24 @@ export class Ec2Stack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: Ec2StackProps) {
     super(scope, id, props);
 
-    // Account is at the per-region VPC limit with CSD prod/UAT/test VPCs already in place.
-    // We land this POC in the CloudSeeDrive-Test VPC (public subnet us-east-1a) — net-new
-    // SG + EC2 only. Overridable via context: `cdk deploy -c vpcId=... -c subnetId=... -c az=...`
-    const vpcId = (this.node.tryGetContext('vpcId') as string) ?? 'vpc-0c27f04a8a26fcad3';
-    const subnetId = (this.node.tryGetContext('subnetId') as string) ?? 'subnet-06d30247b5d487c64';
+    // This branch (opensearch-extension) moves the POC EC2 into the CloudSeeDrive-UAT
+    // VPC so the app can reach the UAT OpenSearch VPC endpoint directly. The alternative
+    // (editing Test VPC route tables to use the existing UAT<->Test peering) touches
+    // shared infra that other workloads depend on; running in UAT's public subnet is a
+    // net-new EC2 that teardown removes cleanly.
+    //
+    // Baseline POC (main branch) defaults were: vpc-0c27f04a8a26fcad3 / subnet-06d30247b5d487c64.
+    // Override either set via context: `cdk deploy -c vpcId=... -c subnetId=... -c az=...`
+    const vpcId = (this.node.tryGetContext('vpcId') as string) ?? 'vpc-0e4dc9327a601ac89';
+    const subnetId = (this.node.tryGetContext('subnetId') as string) ?? 'subnet-0b06f0e8a3cf4082c';
     const az = (this.node.tryGetContext('az') as string) ?? 'us-east-1a';
+
+    // UAT OpenSearch domain — app reaches it over the VPC endpoint.
+    const opensearchDomainName = 'cloudseedrive-uat';
+    const opensearchEndpoint = 'vpc-cloudseedrive-uat-bmfr4znnqgl5fq2gf2qjn6xsbu.us-east-1.es.amazonaws.com';
+    // v2: read from CSD's real per-account index instead of our isolated one.
+    // Bootstrap script grants our role read access to this index.
+    const opensearchIndex = `aws_account_${this.account}_uat_active`;
 
     const vpc = ec2.Vpc.fromVpcAttributes(this, 'Vpc', {
       vpcId,
@@ -50,10 +69,32 @@ export class Ec2Stack extends cdk.Stack {
     // Read the deploy tarball
     props.deployBucket.grantRead(role);
 
-    // Custom-mode: broad S3 RW on the three demo buckets
-    for (const b of [props.bucketA, props.bucketB, props.bucketC]) {
-      b.grantReadWrite(role);
-    }
+    // Custom-mode: presigned URLs are signed by this role, so it needs
+    // GetObject/PutObject on the real buckets. IAM mode uses the user's
+    // assumed creds and doesn't depend on this grant.
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:PutObject'],
+      resources: REAL_BUCKETS.map(b => `arn:aws:s3:::${b}/*`),
+    }));
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket', 's3:GetBucketLocation'],
+      resources: REAL_BUCKETS.map(b => `arn:aws:s3:::${b}`),
+    }));
+
+    // OpenSearch access. Note: granting es:ESHttp* here is necessary but NOT sufficient —
+    // the UAT domain has a resource-based access policy that must also include this role
+    // ARN, and FGAC requires a backend role mapping. Both are applied by
+    // scripts/bootstrap-opensearch.sh using the master user's credentials.
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['es:ESHttpGet', 'es:ESHttpPost', 'es:ESHttpPut', 'es:ESHttpDelete', 'es:ESHttpHead'],
+      resources: [
+        `arn:aws:es:${this.region}:${this.account}:domain/${opensearchDomainName}`,
+        `arn:aws:es:${this.region}:${this.account}:domain/${opensearchDomainName}/*`,
+      ],
+    }));
 
     // Cognito admin ops — listing users/groups for the admin UI
     role.addToPolicy(new iam.PolicyStatement({
@@ -115,10 +156,10 @@ export class Ec2Stack extends cdk.Stack {
       `Environment=USER_POOL_CLIENT_ID=${props.userPoolClientId}`,
       `Environment=IDENTITY_POOL_ID=${props.identityPoolId}`,
       `Environment=AWS_REGION=${this.region}`,
-      `Environment=BUCKET_A=${props.bucketA.bucketName}`,
-      `Environment=BUCKET_B=${props.bucketB.bucketName}`,
-      `Environment=BUCKET_C=${props.bucketC.bucketName}`,
+      `Environment=REAL_BUCKETS=${REAL_BUCKETS.join(',')}`,
       `Environment=DEPLOY_BUCKET=${props.deployBucket.bucketName}`,
+      `Environment=OPENSEARCH_ENDPOINT=${opensearchEndpoint}`,
+      `Environment=OPENSEARCH_INDEX=${opensearchIndex}`,
       'AmbientCapabilities=CAP_NET_BIND_SERVICE',
       '',
       '[Install]',
@@ -153,6 +194,10 @@ export class Ec2Stack extends cdk.Stack {
     new cdk.CfnOutput(this, 'InstancePublicIp', { value: this.instance.instancePublicIp });
     new cdk.CfnOutput(this, 'InstancePublicDnsName', { value: this.instance.instancePublicDnsName });
     new cdk.CfnOutput(this, 'InstanceId', { value: this.instance.instanceId });
+    new cdk.CfnOutput(this, 'InstanceRoleArn', { value: role.roleArn });
     new cdk.CfnOutput(this, 'AppUrl', { value: `http://${this.instance.instancePublicDnsName}` });
+    new cdk.CfnOutput(this, 'OpensearchEndpoint', { value: opensearchEndpoint });
+    new cdk.CfnOutput(this, 'OpensearchIndex', { value: opensearchIndex });
+    new cdk.CfnOutput(this, 'OpensearchDomainName', { value: opensearchDomainName });
   }
 }

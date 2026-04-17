@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
 import { Login } from './pages/Login';
 import { Browse } from './pages/Browse';
+import { Search } from './pages/Search';
 import { Admin } from './pages/Admin';
 import { getMe, getToken, setToken, Me } from './api';
 
@@ -43,6 +44,7 @@ export function App() {
               <span className={`badge ${me.scheme}`}>{me.scheme.toUpperCase()}</span>
               <span>{me.email}</span>
               <Link to="/browse">Browse</Link>
+              <Link to="/search">Search</Link>
               {me.groups.includes('admin') && <Link to="/admin">Admin</Link>}
               <a href="#" onClick={e => { e.preventDefault(); logout(); }}>Logout</a>
             </>
@@ -56,6 +58,7 @@ export function App() {
           <Route path="/" element={me ? <Navigate to="/browse" /> : <Navigate to="/login" />} />
           <Route path="/login" element={<Login onLoggedIn={refreshMe} />} />
           <Route path="/browse" element={me ? <Browse me={me} refreshMe={refreshMe} /> : <Navigate to="/login" />} />
+          <Route path="/search" element={me ? <Search me={me} /> : <Navigate to="/login" />} />
           <Route path="/admin" element={me?.groups.includes('admin') ? <Admin refreshMe={refreshMe} /> : <Navigate to="/browse" />} />
         </Routes>
       </div>

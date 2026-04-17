@@ -47,6 +47,17 @@ export interface Listing { scheme: 'iam' | 'custom'; bucket: string; prefix: str
 export const listObjects = (bucket: string, prefix?: string) =>
   req<Listing>(`/api/buckets/${encodeURIComponent(bucket)}/objects${prefix ? `?prefix=${encodeURIComponent(prefix)}` : ''}`);
 
+export interface SearchHit { id: string; score: number; bucket: string; key: string; prefix?: string; size?: number; lastModified?: string; }
+export interface SearchResponse {
+  scheme: 'iam' | 'custom';
+  bypassedScope: boolean;
+  scope: Record<string, { allowedPrefixes: string[] }>;
+  total: number;
+  hits: SearchHit[];
+}
+export const search = (q: string) => req<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}`);
+export const getScope = () => req<{ source: 'iam' | 'custom'; buckets: Record<string, { allowedPrefixes: string[] }> }>('/api/scope');
+
 export const presignGet = (bucket: string, key: string) =>
   req<{ url: string }>(`/api/buckets/${encodeURIComponent(bucket)}/presigned-get?key=${encodeURIComponent(key)}`);
 

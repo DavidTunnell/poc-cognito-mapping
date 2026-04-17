@@ -2,10 +2,15 @@ import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
+/**
+ * S3 stack for the POC.
+ *
+ * v1 of this POC also provisioned three demo buckets (poc-csd-bucket-a/b/c)
+ * for seeding sample data. In v2 the POC uses real CSD demo buckets, so the
+ * only stack-owned bucket is the deploy bucket for shipping the app tarball
+ * to EC2 and staging bootstrap payloads.
+ */
 export class S3Stack extends cdk.Stack {
-  public readonly bucketA: s3.Bucket;
-  public readonly bucketB: s3.Bucket;
-  public readonly bucketC: s3.Bucket;
   public readonly deployBucket: s3.Bucket;
 
   constructor(scope: Construct, id: string, props: cdk.StackProps) {
@@ -13,38 +18,16 @@ export class S3Stack extends cdk.Stack {
 
     const accountSuffix = cdk.Stack.of(this).account;
 
-    const common: Partial<s3.BucketProps> = {
+    this.deployBucket = new s3.Bucket(this, 'DeployBucket', {
+      bucketName: `poc-csd-deploy-${accountSuffix}`,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
-    };
-
-    this.bucketA = new s3.Bucket(this, 'BucketA', {
-      bucketName: `poc-csd-bucket-a-${accountSuffix}`,
-      ...common,
-    });
-
-    this.bucketB = new s3.Bucket(this, 'BucketB', {
-      bucketName: `poc-csd-bucket-b-${accountSuffix}`,
-      ...common,
-    });
-
-    this.bucketC = new s3.Bucket(this, 'BucketC', {
-      bucketName: `poc-csd-bucket-c-${accountSuffix}`,
-      ...common,
-    });
-
-    this.deployBucket = new s3.Bucket(this, 'DeployBucket', {
-      bucketName: `poc-csd-deploy-${accountSuffix}`,
-      ...common,
       lifecycleRules: [{ expiration: cdk.Duration.days(7) }],
     });
 
-    new cdk.CfnOutput(this, 'BucketAName', { value: this.bucketA.bucketName });
-    new cdk.CfnOutput(this, 'BucketBName', { value: this.bucketB.bucketName });
-    new cdk.CfnOutput(this, 'BucketCName', { value: this.bucketC.bucketName });
     new cdk.CfnOutput(this, 'DeployBucketName', { value: this.deployBucket.bucketName });
   }
 }
