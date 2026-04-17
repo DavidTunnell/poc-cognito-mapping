@@ -26,8 +26,20 @@ export const config = {
     .split(',').map(s => s.trim()).filter(Boolean),
   opensearchEndpoint: process.env.OPENSEARCH_ENDPOINT ?? '',
   opensearchIndex: process.env.OPENSEARCH_INDEX ?? 'aws_account_592920047652_uat_active',
+  /**
+   * Kept for backward compatibility only — the v3 scope resolver no longer
+   * uses a fixed candidate list. Leave unset in normal operation.
+   */
   probePrefixes: (process.env.PROBE_PREFIXES ?? DEFAULT_PROBE_PREFIXES.join(','))
     .split(',').map(s => s.trim()).filter(Boolean),
+  /**
+   * OpenSearch field template for tag-based filters. If set, scope filter will
+   * include `term: { <template with {key}> }` clauses for each allowedTag.
+   * Example: "Metadata.Tagging.{key}.keyword".  Left empty in the POC because
+   * CSD's UAT index does not currently index S3 tags; tag conditions fall back
+   * to request-time IAM enforcement.
+   */
+  tagFieldTemplate: process.env.TAG_FIELD_TEMPLATE ?? '',
   searchBypassScope: process.env.SEARCH_BYPASS_SCOPE === '1',
   port: Number(process.env.PORT ?? 3000),
   dataDir: process.env.DATA_DIR ?? './data',

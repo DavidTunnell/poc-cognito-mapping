@@ -1,4 +1,5 @@
 import { Scope } from './scope';
+import { config } from './config';
 
 /**
  * Build an OpenSearch query that (a) matches the user's search term across
@@ -43,22 +44,35 @@ export function scopeFilter(scope: Scope): Record<string, unknown> {
     return { match_none: {} };
   }
   const should = entries.map(([bucket, s]) => {
-    if (s.allowedPrefixes.length === 0) {
-      return { term: { 'BucketName.keyword': bucket } };
+    const clauses: Record<string, unknown>[] = [{ term: { 'BucketName.keyword': bucket } }];
+
+    if (s.allowedPrefixes.length > 0) {
+      clauses.push({
+        bool: {
+          should: s.allowedPrefixes.map(p => ({ prefix: { 'Key.keyword': p } })),
+          minimum_should_match: 1,
+        },
+      });
     }
-    return {
-      bool: {
-        must: [
-          { term: { 'BucketName.keyword': bucket } },
-          {
-            bool: {
-              should: s.allowedPrefixes.map(p => ({ prefix: { 'Key.keyword': p } })),
-              minimum_should_match: 1,
-            },
+
+    // Tag-based condition — only emitted when the index actually has tag fields
+    // (controlled by config.tagFieldTemplate). Without the template, tag
+    // conditions in the IAM policy are carried on the Scope for truthfulness
+    // but don't narrow search results; S3 still enforces at presign time.
+    if (s.allowedTags && config.tagFieldTemplate) {
+      for (const [tagKey, values] of Object.entries(s.allowedTags)) {
+        if (values.length === 0) continue;
+        const field = config.tagFieldTemplate.replace(/\{key\}/g, tagKey);
+        clauses.push({
+          bool: {
+            should: values.map(v => ({ term: { [field]: v } })),
+            minimum_should_match: 1,
           },
-        ],
-      },
-    };
+        });
+      }
+    }
+
+    return clauses.length === 1 ? clauses[0] : { bool: { must: clauses } };
   });
   return { bool: { should, minimum_should_match: 1 } };
 }

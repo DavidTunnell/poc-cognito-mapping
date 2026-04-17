@@ -121,6 +121,26 @@ npm run dev:server   # :3000
 npm run dev:web      # :5173   (proxies /api and /auth to :3000)
 ```
 
+## Supported IAM patterns
+
+The scope resolver calls `iam:SimulatePrincipalPolicy` against resource/prefix candidates mined from each user's actual role policies. In practice that means admins can edit the three POC roles (or attach managed policies to them) and the POC picks it up on next login — no code change, no config change.
+
+| Pattern | Handled? | How |
+|---|---|---|
+| `Allow s3:ListBucket` on whole bucket | ✓ | Simulate empty prefix → `allowed` |
+| `Allow s3:ListBucket` with `StringLike s3:prefix: [...]` | ✓ | Prefix values mined from policy, simulated individually |
+| `Allow s3:ListBucket` with `StringEquals s3:prefix: ...` | ✓ | Same as above |
+| `Allow s3:GetObject` on `bucket/prefix/*` | ✓ | Prefix extracted from resource ARN |
+| Multiple Allow prefixes on one bucket | ✓ | Each is simulated; union becomes the scope |
+| Explicit `Deny` overlay | ✓ | Simulate honors Deny; candidates drop out |
+| `NotResource` / `NotAction` | ✓ | Simulate evaluates them correctly |
+| `Resource: "*"` / `arn:aws:s3:::*` wildcard | ✓ | All known buckets probed |
+| Managed policies attached to the role | ✓ | `iam:ListAttachedRolePolicies` + `GetPolicyVersion` |
+| `s3:ExistingObjectTag/<key>` condition | Detected, not filtered | Tag values carried on `Scope.allowedTags` but the CSD UAT index has no tag fields yet. Set `TAG_FIELD_TEMPLATE` env var (e.g., `Metadata.Tagging.{key}.keyword`) to activate the filter once Fast Buckets indexes tags. |
+| Conditions on `aws:SourceIp`, `aws:CurrentTime`, `aws:MultiFactorAuthPresent`, etc. | Request-time only | The UI may show items the user can't actually download. Presigned URLs use the user's own STS creds; S3 enforces these conditions on the actual request. |
+
+**Required instance-role grants** (see [cdk/lib/ec2-stack.ts](cdk/lib/ec2-stack.ts)): `iam:SimulatePrincipalPolicy`, `iam:ListAttachedRolePolicies`, `iam:ListRolePolicies`, `iam:GetRolePolicy`, plus `iam:GetPolicy` / `iam:GetPolicyVersion` on `arn:aws:iam::<account>:policy/*` for managed-policy expansion.
+
 ## Known infra constraints
 
 - **HTTP only**, password authenticated. Do not use with real users — put CloudFront + ACM in front before that.

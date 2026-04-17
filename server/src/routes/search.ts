@@ -28,7 +28,7 @@ interface OsSearchResponse {
 searchRouter.get('/search', async (req, res) => {
   const q = (req.query.q as string | undefined) ?? '';
   try {
-    const scope = await resolveScope(req.user!.username, req.idToken!);
+    const scope = await resolveScope(req.user!, req.idToken!);
 
     const query = config.searchBypassScope
       ? bypassedQuery(q)
@@ -86,7 +86,7 @@ function bypassedQuery(q: string): Record<string, unknown> {
 // Debug: return the resolved scope for the current user (no search).
 searchRouter.get('/scope', async (req, res) => {
   try {
-    const scope = await resolveScope(req.user!.username, req.idToken!);
+    const scope = await resolveScope(req.user!, req.idToken!);
     res.json(scope);
   } catch (e: any) {
     res.status(500).json({ error: e.name, message: e.message });
@@ -97,7 +97,7 @@ searchRouter.get('/scope', async (req, res) => {
 // debugging and for verifying the filter matches what the UI shows.
 searchRouter.get('/search-count', async (req, res) => {
   try {
-    const scope = await resolveScope(req.user!.username, req.idToken!);
+    const scope = await resolveScope(req.user!, req.idToken!);
     const filter = scopeFilter(scope);
     const body = filter
       ? { query: { bool: { filter: [filter] } } }

@@ -24,7 +24,7 @@ bucketsRouter.get('/me', async (req, res) => {
 
 bucketsRouter.get('/buckets', async (req, res) => {
   try {
-    const scope = await resolveScope(req.user!.username, req.idToken!);
+    const scope = await resolveScope(req.user!, req.idToken!);
     res.json({ scheme: scope.source, buckets: bucketsInScope(scope) });
   } catch (e: any) { handleError(res, e); }
 });
@@ -33,7 +33,7 @@ bucketsRouter.get('/buckets/:bucket/objects', async (req, res) => {
   const prefix = (req.query.prefix as string | undefined) ?? '';
   const bucket = req.params.bucket;
   try {
-    const scope = await resolveScope(req.user!.username, req.idToken!);
+    const scope = await resolveScope(req.user!, req.idToken!);
     const listing = await listFolder(scope, bucket, prefix);
     res.json({ scheme: scope.source, bucket, prefix, ...listing });
   } catch (e: any) { handleError(res, e); }

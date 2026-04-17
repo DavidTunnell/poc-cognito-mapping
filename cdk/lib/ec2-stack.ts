@@ -96,6 +96,33 @@ export class Ec2Stack extends cdk.Stack {
       ],
     }));
 
+    // IAM reads for the robust scope resolver (v3). Scoped to the three POC
+    // Cognito-mapped roles so we can enumerate their policies and ask
+    // iam:SimulatePrincipalPolicy "can this role do s3:ListBucket on X with
+    // prefix Y?". No wildcards; no write actions.
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'iam:SimulatePrincipalPolicy',
+        'iam:ListAttachedRolePolicies',
+        'iam:ListRolePolicies',
+        'iam:GetRolePolicy',
+      ],
+      resources: [
+        `arn:aws:iam::${this.account}:role/poc-csd-readonly-all`,
+        `arn:aws:iam::${this.account}:role/poc-csd-rw-bucket-a`,
+        `arn:aws:iam::${this.account}:role/poc-csd-readonly-prefix-x`,
+      ],
+    }));
+    // Managed-policy read — any policy attached to the three POC roles needs
+    // to be fetchable so the resolver can see its Statements. POC roles only
+    // have inline policies today, so this is defensive/future-proof.
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['iam:GetPolicy', 'iam:GetPolicyVersion'],
+      resources: [`arn:aws:iam::${this.account}:policy/*`],
+    }));
+
     // Cognito admin ops — listing users/groups for the admin UI
     role.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,

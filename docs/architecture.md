@@ -62,7 +62,7 @@ The app decides who sees what. IAM on the role is wide open; the filter is the g
 | Cognito Identity Pool | `poc_csd_identity_pool` | role mapping type = Token, so `cognito:preferred_role` in the ID token picks the IAM role |
 | IAM role | `poc-csd-readonly-all` | `s3:Get*`, `s3:List*` on buckets a/b/c |
 | IAM role | `poc-csd-rw-bucket-a` | full read+write on bucket a |
-| IAM role | `poc-csd-readonly-prefix-x` | read on `bucket-b/x/*` only; `ListBucket` conditioned on `s3:prefix` starting with `x/` |
+| IAM role | `poc-csd-readonly-prefix-x` | read on `cloudsee-demo-1/Dogs1/*` only; `ListBucket` conditioned on `s3:prefix` starting with `x/` |
 | IAM role | `poc-csd-default-authenticated` | fallback; explicit deny on `s3:*` |
 | S3 bucket | `poc-csd-bucket-a-<account>` | seed objects at root + `proj/` |
 | S3 bucket | `poc-csd-bucket-b-<account>` | seed objects under `x/` and `y/` |
