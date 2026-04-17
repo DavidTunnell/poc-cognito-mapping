@@ -7,12 +7,19 @@ import { Scope } from './scope';
  * source of truth for a data store (OpenSearch) that doesn't know about IAM.
  */
 export function buildSearchQuery(scope: Scope, q: string, size = 50): Record<string, unknown> {
+  // Two paths depending on whether the user supplied a query string:
+  //   - non-empty q: case-insensitive substring match on the exact key plus
+  //     a plain match on the analyzed key field (so "note" finds "notes.md"
+  //     via the analyzer and "proj/readme" finds the nested path via wildcard).
+  //   - empty q: match_all, filtered by scope.
+  // POC; full-text relevance isn't the point — scope-filter injection is.
   const must = q
     ? [{
-        multi_match: {
-          query: q,
-          fields: ['key^3', 'prefix^2', 'bucket'],
-          type: 'best_fields',
+        dis_max: {
+          queries: [
+            { match: { key: q } },
+            { wildcard: { 'key.keyword': { value: `*${q}*`, case_insensitive: true } } },
+          ],
         },
       }]
     : [{ match_all: {} }];
@@ -52,7 +59,10 @@ export function scopeFilter(scope: Scope): Record<string, unknown> {
           { term: { bucket } },
           {
             bool: {
-              should: s.allowedPrefixes.map(p => ({ prefix: { key: p } })),
+              // prefix query against key.keyword (unanalyzed) — the text field is
+              // tokenized by the standard analyzer which drops '/', so `key` itself
+              // doesn't support path-prefix matching.
+              should: s.allowedPrefixes.map(p => ({ prefix: { 'key.keyword': p } })),
               minimum_should_match: 1,
             },
           },

@@ -62,11 +62,25 @@ echo "-- staging bulk payload to deploy bucket"
 aws s3 cp "$BULK" "s3://$DEPLOY_BUCKET/bulk.ndjson" --region "$REGION" --profile "$PROFILE" >/dev/null
 
 echo "-- indexing via EC2 (instance role signs requests)"
+# Self-contained inner script staged on S3 — avoids SSM's JSON-in-parameters parsing quirks.
+INNER="$STAGE/seed-inner.sh"
+cat > "$INNER" <<EOF
+#!/bin/bash
+set -e
+pip3 install --quiet awscurl || (dnf install -y python3-pip && pip3 install --quiet awscurl)
+aws s3 cp s3://${DEPLOY_BUCKET}/bulk.ndjson /tmp/bulk.ndjson
+tr -d '\r' < /tmp/bulk.ndjson > /tmp/bulk.clean.ndjson
+awscurl --service es -X POST "https://${ENDPOINT}/${INDEX}/_bulk?refresh=true" -d @/tmp/bulk.clean.ndjson -H "content-type: application/x-ndjson" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('errors:', d.get('errors'), 'items:', len(d.get('items',[])))"
+awscurl --service es "https://${ENDPOINT}/${INDEX}/_count"
+EOF
+aws s3 cp "$INNER" "s3://$DEPLOY_BUCKET/bootstrap/seed-inner.sh" --region "$REGION" --profile "$PROFILE" >/dev/null
+
 CMD=$(aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
   --comment "seed poc-csd index" \
-  --parameters commands="[\"set -e\",\"pip3 install --quiet awscurl || (dnf install -y python3-pip && pip3 install --quiet awscurl)\",\"aws s3 cp s3://$DEPLOY_BUCKET/bulk.ndjson /tmp/bulk.ndjson\",\"awscurl --service es -X POST 'https://$ENDPOINT/$INDEX/_bulk' --data-binary @/tmp/bulk.ndjson -H 'content-type: application/x-ndjson' | head -c 500\",\"echo\",\"awscurl --service es -X POST 'https://$ENDPOINT/$INDEX/_refresh' -H 'content-type: application/json'\",\"awscurl --service es 'https://$ENDPOINT/$INDEX/_count' -H 'content-type: application/json'\"]" \
+  --parameters "commands=['aws s3 cp s3://${DEPLOY_BUCKET}/bootstrap/seed-inner.sh /tmp/seed-inner.sh','chmod +x /tmp/seed-inner.sh','/tmp/seed-inner.sh','rm -f /tmp/seed-inner.sh /tmp/bulk.ndjson /tmp/bulk.clean.ndjson']" \
   --region "$REGION" --profile "$PROFILE" \
   --query "Command.CommandId" --output text)
 

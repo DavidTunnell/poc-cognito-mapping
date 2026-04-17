@@ -53,14 +53,15 @@ CURRENT=$(aws opensearch describe-domain --domain-name "$DOMAIN" --region "$REGI
   --query "DomainStatus.AccessPolicies" --output text)
 echo "$CURRENT" | python -c "import sys,json; p=json.load(sys.stdin); print('   existing statements:', len(p.get('Statement', [])))"
 
-NEW_POLICY=$(python <<PY
-import json, sys, os
-cur = json.loads('''$CURRENT''')
+ACCOUNT_ID=$(echo "$INSTANCE_ROLE_ARN" | cut -d: -f5)
+DOMAIN_RES="arn:aws:es:${REGION}:${ACCOUNT_ID}:domain/${DOMAIN}/*"
+NEW_POLICY=$(INSTANCE_ROLE_ARN="$INSTANCE_ROLE_ARN" DOMAIN_RES="$DOMAIN_RES" CURRENT_POLICY="$CURRENT" python <<'PY'
+import json, os
+cur = json.loads(os.environ['CURRENT_POLICY'])
 role_arn = os.environ['INSTANCE_ROLE_ARN']
-domain_res = f"arn:aws:es:$REGION:$(echo '$INSTANCE_ROLE_ARN' | cut -d: -f5):domain/$DOMAIN/*"
+domain_res = os.environ['DOMAIN_RES']
 marker_sid = "PocCsdOpenSearchAccess"
 cur.setdefault('Statement', [])
-# drop any prior POC statement so this is idempotent
 cur['Statement'] = [s for s in cur['Statement'] if s.get('Sid') != marker_sid]
 cur['Statement'].append({
     "Sid": marker_sid,
@@ -102,16 +103,62 @@ if [[ -z "$MASTER_AK" || -z "$MASTER_SK" ]]; then
   exit 1
 fi
 
-# Read index mapping + role definitions from the payload files so the remote command stays short.
-MAPPING_JSON='{"mappings":{"properties":{"bucket":{"type":"keyword"},"key":{"type":"text","fields":{"keyword":{"type":"keyword","ignore_above":1024}}},"prefix":{"type":"keyword"},"size":{"type":"long"},"lastModified":{"type":"date"}}}}'
-ROLE_JSON='{"index_permissions":[{"index_patterns":["poc-csd-*"],"allowed_actions":["crud","create_index","indices:data/read/search","indices:data/write/index","indices:data/write/bulk*","indices:admin/mapping/put","indices:admin/create"]}]}'
-ROLE_MAPPING_JSON=$(python -c "import json,os; print(json.dumps({'backend_roles':[os.environ['INSTANCE_ROLE_ARN']]}))")
+# Stage a self-contained inner script + JSON payloads on the deploy bucket,
+# then have SSM fetch and run it. Avoids the JSON-in-CLI-parameters escaping
+# nightmare and keeps the actual logic readable.
+DEPLOY_BUCKET=$(aws cloudformation describe-stacks --stack-name PocCsd-S3 --region "$REGION" --profile "$PROFILE" \
+  --query "Stacks[0].Outputs[?OutputKey=='DeployBucketName'].OutputValue" --output text)
+STAGE=$(mktemp -d)
+trap "rm -rf '$STAGE'" EXIT
+
+cat > "$STAGE/mapping.json" <<'EOF'
+{"mappings":{"properties":{"bucket":{"type":"keyword"},"key":{"type":"text","fields":{"keyword":{"type":"keyword","ignore_above":1024}}},"prefix":{"type":"keyword"},"size":{"type":"long"},"lastModified":{"type":"date"}}}}
+EOF
+
+cat > "$STAGE/role.json" <<'EOF'
+{"cluster_permissions":["cluster_composite_ops"],"index_permissions":[{"index_patterns":["poc-csd-*"],"allowed_actions":["indices_all"]}]}
+EOF
+
+INSTANCE_ROLE_ARN="$INSTANCE_ROLE_ARN" python -c "import json,os; print(json.dumps({'backend_roles':[os.environ['INSTANCE_ROLE_ARN']]}))" > "$STAGE/rolemapping.json"
+
+cat > "$STAGE/inner.sh" <<EOF
+#!/bin/bash
+set -e
+pip3 install --quiet awscurl || (dnf install -y python3-pip && pip3 install --quiet awscurl)
+aws s3 cp s3://${DEPLOY_BUCKET}/bootstrap/mapping.json /tmp/mapping.json
+aws s3 cp s3://${DEPLOY_BUCKET}/bootstrap/role.json /tmp/role.json
+aws s3 cp s3://${DEPLOY_BUCKET}/bootstrap/rolemapping.json /tmp/rolemapping.json
+export AWS_ACCESS_KEY_ID='${MASTER_AK}'
+export AWS_SECRET_ACCESS_KEY='${MASTER_SK}'
+export AWS_DEFAULT_REGION='${REGION}'
+echo "-- creating index"
+awscurl --service es -X PUT "https://${ENDPOINT}/${INDEX}" -d "@/tmp/mapping.json" -H "content-type: application/json" || echo "   (index may already exist, continuing)"
+echo
+echo "-- creating role"
+awscurl --service es -X PUT "https://${ENDPOINT}/_plugins/_security/api/roles/${ROLE_NAME}" -d "@/tmp/role.json" -H "content-type: application/json"
+echo
+echo "-- creating role mapping"
+awscurl --service es -X PUT "https://${ENDPOINT}/_plugins/_security/api/rolesmapping/${ROLE_NAME}" -d "@/tmp/rolemapping.json" -H "content-type: application/json"
+echo
+echo "-- verifying role mapping"
+awscurl --service es "https://${ENDPOINT}/_plugins/_security/api/rolesmapping/${ROLE_NAME}" -H "content-type: application/json"
+echo
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+echo "BOOTSTRAP_DONE"
+EOF
+chmod +x "$STAGE/inner.sh"
+
+echo "-- uploading bootstrap payload"
+aws s3 cp "$STAGE/mapping.json"     "s3://$DEPLOY_BUCKET/bootstrap/mapping.json"     --region "$REGION" --profile "$PROFILE" >/dev/null
+aws s3 cp "$STAGE/role.json"        "s3://$DEPLOY_BUCKET/bootstrap/role.json"        --region "$REGION" --profile "$PROFILE" >/dev/null
+aws s3 cp "$STAGE/rolemapping.json" "s3://$DEPLOY_BUCKET/bootstrap/rolemapping.json" --region "$REGION" --profile "$PROFILE" >/dev/null
+aws s3 cp "$STAGE/inner.sh"         "s3://$DEPLOY_BUCKET/bootstrap/inner.sh"         --region "$REGION" --profile "$PROFILE" >/dev/null
 
 CMD=$(aws ssm send-command \
   --instance-ids "$INSTANCE_ID" \
   --document-name "AWS-RunShellScript" \
   --comment "bootstrap poc-csd OpenSearch" \
-  --parameters commands="[\"set -e\",\"pip3 install --quiet awscurl || (dnf install -y python3-pip && pip3 install --quiet awscurl)\",\"export AWS_ACCESS_KEY_ID='$MASTER_AK' AWS_SECRET_ACCESS_KEY='$MASTER_SK' AWS_DEFAULT_REGION='$REGION'\",\"awscurl --service es -X PUT 'https://$ENDPOINT/$INDEX' -d '$MAPPING_JSON' -H 'content-type: application/json' || true\",\"awscurl --service es -X PUT 'https://$ENDPOINT/_plugins/_security/api/roles/$ROLE_NAME' -d '$ROLE_JSON' -H 'content-type: application/json'\",\"awscurl --service es -X PUT 'https://$ENDPOINT/_plugins/_security/api/rolesmapping/$ROLE_NAME' -d '$ROLE_MAPPING_JSON' -H 'content-type: application/json'\",\"unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY\",\"echo BOOTSTRAP_DONE\"]" \
+  --parameters "commands=['aws s3 cp s3://${DEPLOY_BUCKET}/bootstrap/inner.sh /tmp/inner.sh','chmod +x /tmp/inner.sh','/tmp/inner.sh','rm -f /tmp/inner.sh /tmp/mapping.json /tmp/role.json /tmp/rolemapping.json']" \
   --region "$REGION" --profile "$PROFILE" \
   --query "Command.CommandId" --output text)
 echo "   ssm command: $CMD"
